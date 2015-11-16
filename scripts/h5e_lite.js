@@ -9,25 +9,13 @@ var audioPlayer;
 var canProceed = false;
 var playingAudio = false;
 var playlist = [];
-var sub_playlist = [];
 var currentPlaylistItem = 0;
 var templateVarName = "template";
-var showFailure = false;
-var totalPaths = 0;
-var interactCount = 0;
-var interactCountMin = 0;
-var page_data;
+var showCompletion = false;
 
-// Scoring
-var maxWrong = 0;
-var wrongAnswers = 0;
-var totalQuestions = 0;
-var points = 0;
-var minimumPassingPoints = 0;
+// *** Polyfill for IE8 not haveing Object.keys function ***
 
-// *** Polyfill for IE8 not having Object.keys function ***
-
-if (!Object.keys) Object.keys = function(o) {
+if (!Object.keys2) Object.keys2 = function(o) {
   if (o !== Object(o))
     throw new TypeError('Object.keys called on a non-object');
   var k=[],p;
@@ -46,42 +34,24 @@ function initializeCourse(){
 }
 
 function finalizeCourse(){
-	
-	var score = 0;
-	
-	if(totalQuestions > 0)
-		score = Math.round( (points/totalQuestions) * 100);
-	
-	SCOSetValue("cmi.core.score.raw",score);
-	
-	if(points < minimumPassingPoints )
-		SCOSetValue("cmi.core.lesson_status","failed");
-	else
-		SCOSetValue("cmi.core.lesson_status","passed");
-	
-	SCOCommit();
-	//SCOFinish();
+	// Do aything necessary to tidy things up
 }
 
 // *** Audio ***
 
-function initAudio(playlistName,autoplay){
-	currentPlaylistItem = 0;
-	playlist = page_data[playlistName];
-
+// Could not figure out how to swap out the audio file, so we just recreate and re-initialize
+// audiojs library.  During testing, this did not reveal any issues with this approach.
+// NOTE: There does seem to be a slight delay in having control ready to play.  This is not
+// an issue in user initiated play, but maybecome a factor in auto-play.  Might have to listen
+// for the 'finishedLoading' event or something similiar.
+function initAudio(){
+	
 	var audioDiv = $("#audioDiv");
 	var audioSrc = playlist[currentPlaylistItem];
 	audioDiv.html("<audio id='audioPlayer' src='"+audioSrc+"' preload='auto'/>");
 	
 	audioPlayer = audiojs.createAll()[0];
 	audioPlayer.trackEnded = audioFinished;
-
-	if(autoplay === true)
-		playAudio();	
-}
-
-function playPlaylist(playlistName){
-	initAudio(playlistName,true);
 }
 
 function playAudio() {
@@ -94,16 +64,6 @@ function playAudio() {
 	}
 }
 
-function resetPageAudio(){
-	// If page has a playlist, always set it back to that one for page level replay
-	if(page_data.audio_src !== undefined)
-		playlist = page_data["audio_src"];
-
-	// Reset in case they want to play sequence again
-	currentPlaylistItem=0;
-	audioPlayer.load(playlist[currentPlaylistItem]);
-}
-
 function audioFinished(){
 	playingAudio = false;
 	
@@ -112,13 +72,13 @@ function audioFinished(){
 		currentPlaylistItem++;
 		audioPlayer.load(playlist[currentPlaylistItem]);
 		playAudio();
-	} else {
-		if(interactCount >= interactCountMin){
-			canProceed = true;
-			enableNext();
-		}	
-		resetPageAudio();
+	} else {	
+		canProceed = true;
+		// Reset in case they want to play sequence again
+		currentPlaylistItem=0;
+		audioPlayer.load(playlist[currentPlaylistItem]);
 	}
+	
 }
 
 // *** Navigation ***
@@ -173,20 +133,14 @@ function gotoMenu(){
 function gotoPage(pageNbr){
 	if(canProceed === false)
 		return;
-		
-	// Reset points just in case they are starting over
-	if(pageNbr === 1)
-		points = 0;
-	
+
 	page = pageNbr;
 	showPage("page"+path+page);
 }
 
-function selectAnswer(pageNbr,answerPoints){
+function selectAnswer(pageNbr){
 	if(canProceed === false)
 		return;
-
-	points += answerPoints;
 
 	page=pageNbr;
 	showPage("page"+path+page);
@@ -196,76 +150,14 @@ function selectPath(pathLetter){
 	page = 1;
 	path = pathLetter;
 	showPage("page"+path+page);
-	
-	// Load metadata
-	var metadata = window["metadata"+pathLetter];
-	maxWrong             = metadata.max_wrong;
-	totalQuestions       = metadata.total_questions;
-	totalPaths           = metadata.total_paths;
-	minimumPassingPoints = metadata.minimum_passing_points;
-}
-
-// *** Interaction *** 
-
-function onPageInteraction(itemNbr,playlistName){
-	// If audio is playing, do nothing until it finishes
-	if(playingAudio === true)
-		return;
-
-	// Do not double count
-	if($("#interact_"+itemNbr).hasClass("btn_interact_completed") === false)
-		interactCount++;
-
-	$(".more").addClass("hidden");
-	$("#more_"+itemNbr).removeClass("hidden");
-	$("#interact_"+itemNbr).addClass("btn_interact_completed");
-	
-	if(playlistName !== undefined)
-		initAudio(playlistName,true);
-	
-	if(interactCount >= interactCountMin){
-		canProceed = true;
-		enableNext();
-	}	
-}
-
-function onSelectAnswer(id,playlistName,correct){
-	interactCount++;	
-
-	if(correct == true)
-		$("#answer_"+id).addClass("btn_answer_correct");
-	else
-		$("#answer_"+id).addClass("btn_answer_incorrect");
-
-	if(playlistName !== undefined)
-		initAudio(playlistName,true);
-
-	if(interactCount >= interactCountMin){
-		canProceed = true;
-		//enableNext();
-	}
 }
 
 // *** UI ***
 
-function enableNext(){
-	$(".btn_nav").addClass("btn_nav_enabled");
-}
-
-function disableNext(){
-	$(".btn_nav").removeClass("btn_nav_enabled");
-}
-
 function showPage(dataName){
 	// By default, disable next until audio is finished
 	canProceed = false;
-	proceedCount = 0;
-	interactCountMin = 0;
-	interactCount = 0;
 	
-	// Reset next button
-	disableNext();
-
 	// Stop any Audio on show of a page
 	$("#audioDiv").html("");
 	playingAudio = false;
@@ -273,11 +165,12 @@ function showPage(dataName){
 	// Show the page number
 	$("#page").html(dataName);
 			
-	if(showFailure === true){
-		dataName = "conclusion_fail";
-		showFailure = false;
+	if(showCompletion === true){
+		showCompletion = false;
+		dataName = "finished";
 	}
 				
+	var page_data;
 	try{
 		page_data = window[dataName];
 		var myIch = ich[page_data[templateVarName]];
@@ -288,10 +181,6 @@ function showPage(dataName){
 		$("#page").html("Problem ! - '"+dataName+"'");
 		return;
 	}
-	
-	// Show failure attempts as 'message' in our templates
-	if(wrongAnswers > 0)
-		$("#message").html("Attempt #"+(wrongAnswers+1));
 	
 	// Page can indicate my 'pathCompleted', that the Path should get a checkmark
 	// Whenever the menu is displayed again.
@@ -305,28 +194,11 @@ function showPage(dataName){
 	if(page_data.canProceed !== undefined)
 		canProceed = page_data.canProceed;
 	
-	// Page can indicate how many interactionas are required before proceeding.
-	if(page_data.interactCountMin !== undefined)
-		interactCountMin = page_data.interactCountMin;
-
 	// Initialize audio should 'audio_src' be present
 	if(page_data.audio_src !== undefined){
-		if(page_data.autoplay !== undefined){
-			if(page_data.autoplay === true)		
-				initAudio("audio_src",true);
-			else
-				initAudio("audio_src",false);
-		}
-	}
-	
-	// Increment wrong answer count should they choose un-wisely
-	if(page_data.wrong_answer === true){
-		wrongAnswers++;
-	
-		if(wrongAnswers === maxWrong){
-			showFailure = true;			
-			finalizeCourse();
-		}
+		currentPlaylistItem = 0;
+		playlist = page_data.audio_src;
+		initAudio();
 	}
 	
 	// In the main menu, apply checkmarks for completed Paths 
@@ -343,7 +215,7 @@ function applyCompletedClassForMenu(){
 }
 
 function getCompletedPathCount(){
-	var keys = Object.keys(completedPaths);
+	var keys = Object.keys2(completedPaths);
 	
 	if(keys === undefined)
 		return 0;
@@ -371,9 +243,11 @@ function setPathCompleted(path){
 	SCOCommit();
 	
 	// Check for completed course
-	if(isCourseCompleted() === true)
-		finalizeCourse();
-		
+	if(isCourseCompleted() === true){
+		showCompletion = true;
+		SCOSetValue("cmi.core.lesson_status","completed");
+		SCOCommit();
+	}
 }
 
 function restoreCompletedPaths(){
@@ -391,7 +265,7 @@ function isCourseCompleted(){
 	var count = 0;
 	for(var key in completedPaths)
 		count++;
-	if( count >= totalPaths)
+	if( count === 9)
 		return true;
 	return false;
 }
