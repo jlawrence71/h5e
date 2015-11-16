@@ -9,11 +9,14 @@ var audioPlayer;
 var canProceed = false;
 var playingAudio = false;
 var playlist = [];
+var sub_playlist = [];
 var currentPlaylistItem = 0;
 var templateVarName = "template";
 var showFailure = false;
-var showCompletion = false;
 var totalPaths = 0;
+var interactCount = 0;
+var interactCountMin = 0;
+var page_data;
 
 // Scoring
 var maxWrong = 0;
@@ -62,14 +65,23 @@ function finalizeCourse(){
 
 // *** Audio ***
 
-function initAudio(){
-	
+function initAudio(playlistName,autoplay){
+	currentPlaylistItem = 0;
+	playlist = page_data[playlistName];
+
 	var audioDiv = $("#audioDiv");
 	var audioSrc = playlist[currentPlaylistItem];
 	audioDiv.html("<audio id='audioPlayer' src='"+audioSrc+"' preload='auto'/>");
 	
 	audioPlayer = audiojs.createAll()[0];
 	audioPlayer.trackEnded = audioFinished;
+
+	if(autoplay === true)
+		playAudio();	
+}
+
+function playPlaylist(playlistName){
+	initAudio(playlistName,true);
 }
 
 function playAudio() {
@@ -82,6 +94,16 @@ function playAudio() {
 	}
 }
 
+function resetPageAudio(){
+	// If page has a playlist, always set it back to that one for page level replay
+	if(page_data.audio_src !== undefined)
+		playlist = page_data["audio_src"];
+
+	// Reset in case they want to play sequence again
+	currentPlaylistItem=0;
+	audioPlayer.load(playlist[currentPlaylistItem]);
+}
+
 function audioFinished(){
 	playingAudio = false;
 	
@@ -90,11 +112,12 @@ function audioFinished(){
 		currentPlaylistItem++;
 		audioPlayer.load(playlist[currentPlaylistItem]);
 		playAudio();
-	} else {	
-		canProceed = true;
-		// Reset in case they want to play sequence again
-		currentPlaylistItem=0;
-		audioPlayer.load(playlist[currentPlaylistItem]);
+	} else {
+		if(interactCount >= interactCountMin){
+			canProceed = true;
+			enableNext();
+		}	
+		resetPageAudio();
 	}
 }
 
@@ -179,33 +202,82 @@ function selectPath(pathLetter){
 	maxWrong             = metadata.max_wrong;
 	totalQuestions       = metadata.total_questions;
 	totalPaths           = metadata.total_paths;
-	minimumPassingPoints = metadata.minumum_passing_points;
+	minimumPassingPoints = metadata.minimum_passing_points;
+}
+
+// *** Interaction *** 
+
+function onPageInteraction(itemNbr,playlistName){
+	// If audio is playing, do nothing until it finishes
+	if(playingAudio === true)
+		return;
+
+	// Do not double count
+	if($("#interact_"+itemNbr).hasClass("btn_interact_completed") === false)
+		interactCount++;
+
+	$(".more").addClass("hidden");
+	$("#more_"+itemNbr).removeClass("hidden");
+	$("#interact_"+itemNbr).addClass("btn_interact_completed");
+	
+	if(playlistName !== undefined)
+		initAudio(playlistName,true);
+	
+	if(interactCount >= interactCountMin){
+		canProceed = true;
+		enableNext();
+	}	
+}
+
+function onSelectAnswer(id,playlistName,correct){
+	interactCount++;	
+
+	if(correct == true)
+		$("#answer_"+id).addClass("btn_answer_correct");
+	else
+		$("#answer_"+id).addClass("btn_answer_incorrect");
+
+	if(playlistName !== undefined)
+		initAudio(playlistName,true);
+
+	if(interactCount >= interactCountMin){
+		canProceed = true;
+		//enableNext();
+	}
 }
 
 // *** UI ***
 
+function enableNext(){
+	$(".btn_nav").addClass("btn_nav_enabled");
+}
+
+function disableNext(){
+	$(".btn_nav").removeClass("btn_nav_enabled");
+}
+
 function showPage(dataName){
 	// By default, disable next until audio is finished
 	canProceed = false;
+	proceedCount = 0;
+	interactCountMin = 0;
+	interactCount = 0;
 	
+	// Reset next button
+	disableNext();
+
 	// Stop any Audio on show of a page
 	$("#audioDiv").html("");
 	playingAudio = false;
 	
 	// Show the page number
 	$("#page").html(dataName);
-	
-	if(showCompletion === true){
-		showCompletion = false;
-		dataName = "finished";
-	}
-				
+			
 	if(showFailure === true){
 		dataName = "conclusion_fail";
 		showFailure = false;
 	}
 				
-	var page_data;
 	try{
 		page_data = window[dataName];
 		var myIch = ich[page_data[templateVarName]];
@@ -213,7 +285,6 @@ function showPage(dataName){
 		$("#content").html(theHtml);	
 	
 	} catch(err) {
-		console.log("ERROR " + err);
 		$("#page").html("Problem ! - '"+dataName+"'");
 		return;
 	}
@@ -234,11 +305,18 @@ function showPage(dataName){
 	if(page_data.canProceed !== undefined)
 		canProceed = page_data.canProceed;
 	
+	// Page can indicate how many interactionas are required before proceeding.
+	if(page_data.interactCountMin !== undefined)
+		interactCountMin = page_data.interactCountMin;
+
 	// Initialize audio should 'audio_src' be present
 	if(page_data.audio_src !== undefined){
-		currentPlaylistItem = 0;
-		playlist = page_data.audio_src;
-		initAudio();
+		if(page_data.autoplay !== undefined){
+			if(page_data.autoplay === true)		
+				initAudio("audio_src",true);
+			else
+				initAudio("audio_src",false);
+		}
 	}
 	
 	// Increment wrong answer count should they choose un-wisely
@@ -293,10 +371,9 @@ function setPathCompleted(path){
 	SCOCommit();
 	
 	// Check for completed course
-	if(isCourseCompleted() === true){
-		showCompletion = true;
+	if(isCourseCompleted() === true)
 		finalizeCourse();
-	}
+		
 }
 
 function restoreCompletedPaths(){
