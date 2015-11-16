@@ -11,11 +11,20 @@ var playingAudio = false;
 var playlist = [];
 var currentPlaylistItem = 0;
 var templateVarName = "template";
+var showFailure = false;
 var showCompletion = false;
+var totalPaths = 0;
 
-// *** Polyfill for IE8 not haveing Object.keys function ***
+// Scoring
+var maxWrong = 0;
+var wrongAnswers = 0;
+var totalQuestions = 0;
+var points = 0;
+var minimumPassingPoints = 0;
 
-if (!Object.keys2) Object.keys2 = function(o) {
+// *** Polyfill for IE8 not having Object.keys function ***
+
+if (!Object.keys) Object.keys = function(o) {
   if (o !== Object(o))
     throw new TypeError('Object.keys called on a non-object');
   var k=[],p;
@@ -34,16 +43,25 @@ function initializeCourse(){
 }
 
 function finalizeCourse(){
-	// Do aything necessary to tidy things up
+	
+	var score = 0;
+	
+	if(totalQuestions > 0)
+		score = Math.round( (points/totalQuestions) * 100);
+	
+	SCOSetValue("cmi.core.score.raw",score);
+	
+	if(points < minimumPassingPoints )
+		SCOSetValue("cmi.core.lesson_status","failed");
+	else
+		SCOSetValue("cmi.core.lesson_status","passed");
+	
+	SCOCommit();
+	//SCOFinish();
 }
 
 // *** Audio ***
 
-// Could not figure out how to swap out the audio file, so we just recreate and re-initialize
-// audiojs library.  During testing, this did not reveal any issues with this approach.
-// NOTE: There does seem to be a slight delay in having control ready to play.  This is not
-// an issue in user initiated play, but maybecome a factor in auto-play.  Might have to listen
-// for the 'finishedLoading' event or something similiar.
 function initAudio(){
 	
 	var audioDiv = $("#audioDiv");
@@ -78,7 +96,6 @@ function audioFinished(){
 		currentPlaylistItem=0;
 		audioPlayer.load(playlist[currentPlaylistItem]);
 	}
-	
 }
 
 // *** Navigation ***
@@ -133,14 +150,20 @@ function gotoMenu(){
 function gotoPage(pageNbr){
 	if(canProceed === false)
 		return;
-
+		
+	// Reset points just in case they are starting over
+	if(pageNbr === 1)
+		points = 0;
+	
 	page = pageNbr;
 	showPage("page"+path+page);
 }
 
-function selectAnswer(pageNbr){
+function selectAnswer(pageNbr,answerPoints){
 	if(canProceed === false)
 		return;
+
+	points += answerPoints;
 
 	page=pageNbr;
 	showPage("page"+path+page);
@@ -150,6 +173,13 @@ function selectPath(pathLetter){
 	page = 1;
 	path = pathLetter;
 	showPage("page"+path+page);
+	
+	// Load metadata
+	var metadata = window["metadata"+pathLetter];
+	maxWrong             = metadata.max_wrong;
+	totalQuestions       = metadata.total_questions;
+	totalPaths           = metadata.total_paths;
+	minimumPassingPoints = metadata.minumum_passing_points;
 }
 
 // *** UI ***
@@ -164,10 +194,15 @@ function showPage(dataName){
 	
 	// Show the page number
 	$("#page").html(dataName);
-			
+	
 	if(showCompletion === true){
 		showCompletion = false;
 		dataName = "finished";
+	}
+				
+	if(showFailure === true){
+		dataName = "conclusion_fail";
+		showFailure = false;
 	}
 				
 	var page_data;
@@ -178,9 +213,14 @@ function showPage(dataName){
 		$("#content").html(theHtml);	
 	
 	} catch(err) {
+		console.log("ERROR " + err);
 		$("#page").html("Problem ! - '"+dataName+"'");
 		return;
 	}
+	
+	// Show failure attempts as 'message' in our templates
+	if(wrongAnswers > 0)
+		$("#message").html("Attempt #"+(wrongAnswers+1));
 	
 	// Page can indicate my 'pathCompleted', that the Path should get a checkmark
 	// Whenever the menu is displayed again.
@@ -201,6 +241,16 @@ function showPage(dataName){
 		initAudio();
 	}
 	
+	// Increment wrong answer count should they choose un-wisely
+	if(page_data.wrong_answer === true){
+		wrongAnswers++;
+	
+		if(wrongAnswers === maxWrong){
+			showFailure = true;			
+			finalizeCourse();
+		}
+	}
+	
 	// In the main menu, apply checkmarks for completed Paths 
 	if(dataName === "menu")
 		applyCompletedClassForMenu();
@@ -215,7 +265,7 @@ function applyCompletedClassForMenu(){
 }
 
 function getCompletedPathCount(){
-	var keys = Object.keys2(completedPaths);
+	var keys = Object.keys(completedPaths);
 	
 	if(keys === undefined)
 		return 0;
@@ -245,8 +295,7 @@ function setPathCompleted(path){
 	// Check for completed course
 	if(isCourseCompleted() === true){
 		showCompletion = true;
-		SCOSetValue("cmi.core.lesson_status","completed");
-		SCOCommit();
+		finalizeCourse();
 	}
 }
 
@@ -265,7 +314,7 @@ function isCourseCompleted(){
 	var count = 0;
 	for(var key in completedPaths)
 		count++;
-	if( count === 9)
+	if( count >= totalPaths)
 		return true;
 	return false;
 }
